@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import "../App.css";
+import type { ChangeEvent, FormEvent } from "react";
 import { supabase } from "../supabase-client";
 import type { Session } from "@supabase/supabase-js";
 
@@ -8,6 +8,7 @@ interface Task {
   title: string;
   description: string;
   created_at: string;
+  image_url: string;
 }
 
 function TaskManager({ session }: { session: Session }) {
@@ -15,25 +16,14 @@ function TaskManager({ session }: { session: Session }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newDescription, setNewDescription] = useState("");
 
-  const fetchTasks = async () => {
-    const { error, data } = await supabase
-      .from("tasks")
-      .select("*")
-      .order("created_at", { ascending: true });
-
-    if (error) {
-      console.error("Error reading task: ", error.message);
-      return;
-    }
-
-    setTasks(data);
-  };
+  const [taskImage, setTaskImage] = useState<File | null>(null);
 
   const deleteTask = async (id: number) => {
     const { error } = await supabase.from("tasks").delete().eq("id", id);
 
     if (error) {
       console.error("Error deleting task: ", error.message);
+      return;
     }
   };
 
@@ -45,26 +35,98 @@ function TaskManager({ session }: { session: Session }) {
 
     if (error) {
       console.error("Error updating task: ", error.message);
+      return;
     }
   };
 
-  const handleSubmit = async (e: any) => {
+  const uploadImage = async (file: File): Promise<string | null> => {
+    const filePath = `${file.name}-${Date.now()}`;
+
+    const { error } = await supabase.storage
+      .from("tasks-images")
+      .upload(filePath, file);
+
+    if (error) {
+      console.error("Error uploading image:", error.message);
+      return null;
+    }
+
+    const { data } = await supabase.storage
+      .from("tasks-images")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    let imageUrl: string | null = null;
+    if (taskImage) {
+      imageUrl = await uploadImage(taskImage);
+    }
 
     const { error } = await supabase
       .from("tasks")
-      .insert({ ...newTask, email: session.user.email })
+      .insert({ ...newTask, email: session.user.email, image_url: imageUrl })
+      .select()
       .single();
 
     if (error) {
       console.error("Error adding task: ", error.message);
+      return;
     }
 
     setNewTask({ title: "", description: "" });
   };
 
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setTaskImage(e.target.files[0]);
+    }
+  };
+
   useEffect(() => {
-    fetchTasks();
+    let isMounted = true;
+
+    supabase
+      .from("tasks")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .then(({ error, data }) => {
+        if (!isMounted) return;
+
+        if (error) {
+          console.error("Error reading task: ", error.message);
+          return;
+        }
+
+        setTasks(data);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("tasks-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "tasks" },
+        (payload) => {
+          const newTask = payload.new as Task;
+          setTasks((prev) => [...prev, newTask]);
+        }
+      )
+      .subscribe((status) => {
+        console.log("Subscription: ", status);
+      });
+   
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   console.log(tasks);
@@ -90,6 +152,9 @@ function TaskManager({ session }: { session: Session }) {
           }
           style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }}
         />
+
+        <input type="file" accept="image/*" onChange={handleFileChange} />
+
         <button type="submit" style={{ padding: "0.5rem 1rem" }}>
           Add Task
         </button>
@@ -110,11 +175,12 @@ function TaskManager({ session }: { session: Session }) {
             <div>
               <h3>{task.title}</h3>
               <p>{task.description}</p>
+              <img src={task.image_url} style={{ height: 70 }} />
               <div>
                 <textarea
-                  placeholder="Update description..."
+                  placeholder="Updated description..."
                   onChange={(e) => setNewDescription(e.target.value)}
-                ></textarea>
+                />
                 <button
                   style={{ padding: "0.5rem 1rem", marginRight: "0.5rem" }}
                   onClick={() => updateTask(task.id)}
