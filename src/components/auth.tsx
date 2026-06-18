@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { supabase } from "../supabase-client";
 
 const Auth = () => {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -7,7 +8,28 @@ const Auth = () => {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (isSignUp) {
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+      if (signUpError) {
+        console.error("Error signing up: ", signUpError.message);
+        return;
+      }
+    } else {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) {
+        console.error("Error signing up: ", signInError.message);
+        return;
+      }
+    }
   };
+
   return (
     <div style={{ maxWidth: "400px", margin: "0 auto", padding: "1rem" }}>
       <h2>{isSignUp ? "Sign Up" : "Sign In"}</h2>
